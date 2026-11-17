@@ -1,0 +1,22 @@
+{
+  "name": "academy-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "Zero-cost WhatsApp attendance, test-marks and fee automation for a coaching academy (Baileys + Gemini + Google Sheets)",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/mockTest.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@whiskeysockets/baileys": "^6.7.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0",
+    "node-cron": "^3.0.3",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4"
+  }
+}
