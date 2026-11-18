@@ -17,10 +17,10 @@ export class QueueManager extends EventEmitter {
   constructor({
     send, logger, persistPath = null,
     parentDelayMs = [15_000, 25_000], systemDelayMs = [800, 2000],
-    maxParentPerDay = 150, maxAttempts = 3, retryBackoffMs = 30_000, rand = randInt,
+    maxParentPerDay = 150, maxAttempts = 3, retryBackoffMs = 30_000, rand = randInt, onPersist = null,
   }) {
     super();
-    Object.assign(this, { sendFn: send, log: logger, persistPath, parentDelayMs, systemDelayMs, maxParentPerDay, maxAttempts, retryBackoffMs, rand });
+    Object.assign(this, { sendFn: send, log: logger, persistPath, parentDelayMs, systemDelayMs, maxParentPerDay, maxAttempts, retryBackoffMs, rand, onPersist });
     this.items = [];
     this.failed = [];
     this.sentKeys = new Map(); // dedupeKey -> epoch ms (kept 3 days)
@@ -163,12 +163,16 @@ export class QueueManager extends EventEmitter {
 
   /* ----------------------------------------------------------- persistence */
   _persist() {
-    if (!this.persistPath) return;
+    if (!this.persistPath && !this.onPersist) return;
     try {
-      fs.mkdirSync(path.dirname(this.persistPath), { recursive: true });
-      const tmp = `${this.persistPath}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify({ items: this.items, sentKeys: [...this.sentKeys], stats: this.stats, seq: this.seq }));
-      fs.renameSync(tmp, this.persistPath);
+      const json = JSON.stringify({ items: this.items, sentKeys: [...this.sentKeys], stats: this.stats, seq: this.seq });
+      if (this.persistPath) {
+        fs.mkdirSync(path.dirname(this.persistPath), { recursive: true });
+        const tmp = `${this.persistPath}.tmp`;
+        fs.writeFileSync(tmp, json);
+        fs.renameSync(tmp, this.persistPath);
+      }
+      this.onPersist?.(json);
     } catch (e) { this.log?.error('queue persist failed:', e.message); }
   }
   _load() {

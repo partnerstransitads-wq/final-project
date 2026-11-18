@@ -1,14 +1,15 @@
 import { EventEmitter } from 'node:events';
 import { jidToPhone, randInt, sleep } from './utils.js';
+import { useSheetsAuthState } from './sheetsAuthState.js';
 
 /**
  * Thin Baileys adapter: connection + QR + reconnect, message normalisation, human-like sending.
  * Written to work with Baileys 6.x (CJS) and 7.x (ESM) — hence the defensive import resolution.
  */
 export class WhatsAppClient extends EventEmitter {
-  constructor({ config, logger }) {
+  constructor({ config, logger, authStore = null }) {
     super();
-    Object.assign(this, { cfg: config, log: logger });
+    Object.assign(this, { cfg: config, log: logger, authStore });
     this.sock = null;
     this.connected = false;
     this.qr = null;
@@ -27,6 +28,9 @@ export class WhatsAppClient extends EventEmitter {
       fetchLatestBaileysVersion: mod.fetchLatestBaileysVersion ?? d?.fetchLatestBaileysVersion,
       downloadMediaMessage: mod.downloadMediaMessage ?? d?.downloadMediaMessage,
       Browsers: mod.Browsers ?? d?.Browsers,
+      BufferJSON: mod.BufferJSON ?? d?.BufferJSON,
+      initAuthCreds: mod.initAuthCreds ?? d?.initAuthCreds,
+      proto: mod.proto ?? d?.proto,
     };
     const { default: pino } = await import('pino');
     this.pino = pino({ level: 'silent' });
@@ -35,8 +39,8 @@ export class WhatsAppClient extends EventEmitter {
 
   async _connect() {
     const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, DisconnectReason } = this.B;
-    const { state, saveCreds } = await useMultiFileAuthState(this.cfg.authDir);
-    this.log?.info(state.creds?.registered || state.creds?.me ? `WhatsApp: reusing saved session from ${this.cfg.authDir} (no QR needed)` : `WhatsApp: no saved session in ${this.cfg.authDir} — QR pairing required once`);
+    const { state, saveCreds } = this.authStore ? await useSheetsAuthState(this.authStore, this.B) : await useMultiFileAuthState(this.cfg.authDir);
+    this.log?.info(state.creds?.registered || state.creds?.me ? `WhatsApp: reusing saved session from ${this.authStore ? 'Google Sheets' : this.cfg.authDir} (no QR needed)` : `WhatsApp: no saved session — QR pairing required once`);
     let version;
     try { ({ version } = await fetchLatestBaileysVersion()); } catch { /* fall back to library default */ }
 
@@ -60,7 +64,14 @@ export class WhatsAppClient extends EventEmitter {
         this.emit('close');
         const code = lastDisconnect?.error?.output?.statusCode;
         if (code === DisconnectReason.loggedOut) {
-          this.log?.error('WhatsApp logged out (session revoked). Delete the auth/ folder and restart to scan a new QR.');
+          if (this.authStore) { // wipe the dead session and offer a fresh QR automatically
+            this.log?.error('WhatsApp logged out (session revoked). Clearing stored session — open /qr to pair again.');
+            this.authStore.clearPrefix('auth:');
+            await this.authStore.flush().catch(() => {});
+            setTimeout(() => this._connect().catch((e) => this.log?.error('reconnect failed', e)), 2000);
+          } else {
+            this.log?.error('WhatsApp logged out (session revoked). Delete the auth_info_baileys folder and restart to scan a new QR.');
+          }
           return;
         }
         if (this.stopping) return;
