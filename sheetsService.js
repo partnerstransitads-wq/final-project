@@ -5,10 +5,12 @@ export const TABS = {
   Students: ['StudentID', 'Name', 'Class', 'ParentName', 'ParentPhone', 'MonthlyFee', 'RollNo', 'Active'],
   Attendance: ['Date', 'Class', 'StudentID', 'Name', 'Status', 'Time', 'UpdatedAt'],
   Tests: ['Date', 'Class', 'Subject', 'TestKey', 'StudentID', 'Name', 'Marks', 'TotalMarks', 'Percentage'],
+  Session: ['Key', 'Value', 'Parts', 'UpdatedAt'], // WhatsApp auth + bot state when SESSION_STORE=sheets (SENSITIVE)
   Fees: ['Month', 'StudentID', 'Name', 'Class', 'ParentPhone', 'ExpectedAmount', 'Status', 'PaidAmount', 'PaidDate',
     'PaymentMethod', 'TransactionID', 'RemindersSent', 'LastReminderDate', 'Notes'],
 };
 
+const PART = '|part|';
 const colLetter = (n) => { let s = ''; for (; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
 const str = (v) => (v === undefined || v === null ? '' : String(v).trim());
 const money = (v) => Number(String(v ?? '').replace(/[^\d.]/g, '')) || 0;
@@ -159,6 +161,35 @@ export class SheetsService {
     })));
   }
 
+  /* ------------------------------------------------- Session (key/value) */
+  async kvReadAll() {
+    const rows = await this._readTable('Session');
+    const byKey = new Map(rows.map((r) => [String(r.Key), r]));
+    const out = new Map();
+    for (const r of rows) {
+      const k = String(r.Key);
+      if (k.includes(PART)) continue;
+      const n = Number(r.Parts) || 0;
+      if (!n) continue; // deleted
+      let v = String(r.Value ?? '');
+      for (let i = 1; i < n; i++) v += String(byKey.get(`${k}${PART}${i}`)?.Value ?? '');
+      out.set(k, v);
+    }
+    return out;
+  }
+  /** entries: [[key, string|null]] — values > 45k chars are split over several rows (Sheets cell limit is 50k). */
+  async kvWrite(entries) {
+    const existing = new Map((await this._readTable('Session')).map((r) => [String(r.Key), r]));
+    const now = `${pktDate()} ${pktTime()}`, objs = [];
+    for (const [k, v] of entries) {
+      const prev = Number(existing.get(k)?.Parts) || 0;
+      const parts = v === null || v === '' ? [] : v.match(/[\s\S]{1,45000}/g);
+      objs.push({ Key: k, Value: parts[0] ?? '', Parts: parts.length, UpdatedAt: now });
+      for (let i = 1; i < parts.length; i++) objs.push({ Key: `${k}${PART}${i}`, Value: parts[i], Parts: 0, UpdatedAt: now });
+      for (let i = Math.max(1, parts.length); i < prev; i++) objs.push({ Key: `${k}${PART}${i}`, Value: '', Parts: 0, UpdatedAt: now });
+    }
+    await this._upsert('Session', ['Key'], objs);
+  }
   /* ------------------------------------------------------------------ Fees */
   _toFee(r) {
     return {

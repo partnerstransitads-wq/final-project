@@ -12,8 +12,8 @@ const STATUS_ICON = { Present: '✅', Late: '⏰', Absent: '❌' };
  *   5-minute buffer session → Sheets + group summary + throttled parent DMs.
  */
 export class AttendanceManager {
-  constructor({ sheets, gemini, queue, config, logger, notifyOwner, now = () => new Date() }) {
-    Object.assign(this, { sheets, gemini, queue, cfg: config, log: logger, notifyOwner, now });
+  constructor({ sheets, gemini, queue, config, logger, notifyOwner, now = () => new Date(), onPersist = null }) {
+    Object.assign(this, { sheets, gemini, queue, cfg: config, log: logger, notifyOwner, now, onPersist });
     this.sessions = new Map(); // key `${date}|${cls}` -> session
     this.timers = new Map();
     this.mutex = new KeyedMutex();
@@ -219,9 +219,11 @@ export class AttendanceManager {
       fs.mkdirSync(path.dirname(this.statePath), { recursive: true });
       const cutoff = Date.now() - 2 * 86_400_000;
       for (const [k, s] of this.sessions) if (s.finalized && s.deadline < cutoff) this.sessions.delete(k);
+      const json = JSON.stringify([...this.sessions.values()]);
       const tmp = `${this.statePath}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify([...this.sessions.values()]));
+      fs.writeFileSync(tmp, json);
       fs.renameSync(tmp, this.statePath);
+      this.onPersist?.(json);
     } catch (e) { this.log?.error('sessions persist failed:', e.message); }
   }
   _restore() {
